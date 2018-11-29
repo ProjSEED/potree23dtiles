@@ -13,10 +13,14 @@
 ./PotreeConverter.exe C:/data.las -o C:/potree_converted --output-format LAS -p pageName
 ```
 ## potree23dtiles
-The code is only for testing purposes,please see 'testConvert' function for specific usage.  
-you should change these values as yours:
->> bbox、src、dst、proj_param
-
+see function for specific usage. 
+```
+convert23dtiles(src,outdir,proj_param,max_level=5) 
+>> src:potree out data dir,include cloud.js file
+>> outdir:output
+>> proj_param:proj4 param,ex:EPSG:32650
+>> max_level:max tree node level,default 15
+```
 ## cesium
 ```
     var tileset = new Cesium.Cesium3DTileset({ url: "http://127.0.0.1/test/tileset.json" });
