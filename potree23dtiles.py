@@ -8,14 +8,16 @@ import glob2
 from pnts import *
 
 _STEP = 20
+geomeotric_space = 16
+limit_node_point_size=4
 
-def read_las(fname, attr_list=('rgb','class'),tm='49n'):
+def read_las(fname, attr_list=('rgb','class'),tm='EPSG:32650'):
     '''
     read las file
     :param fname: file name
     :param attr_list:
-    :param scale: 比例尺
-    :return: 返回数据的dist
+    :param scale: scale
+    :return: return dist
     '''
     las = las_(fname)
     ncout = las.count()
@@ -24,7 +26,7 @@ def read_las(fname, attr_list=('rgb','class'),tm='49n'):
     boundary = []
     xyz = []
 
-    # 判断数据里边是否存在指定的属性
+    # if proper not in las,not use it
     records = [key[2:] for key in las._RecordTypes[las.get_record_id()].keys()]
 
     # init attribute of pointcloud
@@ -50,7 +52,7 @@ def read_las(fname, attr_list=('rgb','class'),tm='49n'):
         boundary.append(xyz[len(xyz)-1].min(0)*_scale)
         boundary.append(xyz[len(xyz)-1].max(0)*_scale)
 
-    # 防止没有颜色信息
+    # if no rgb,set (0,0,0)
     if not attribute.get('rgb',None):
         attribute['rgb']=np.zeros((ncout,3),dtype='u1')
 
@@ -59,7 +61,7 @@ def read_las(fname, attr_list=('rgb','class'),tm='49n'):
     boundary = (boundary + las.offset).T
     xyz = np.vstack(xyz)
 
-    # 存储数据到数组
+    # save point proper
     for k in attr_list:
         if len(attribute[k][0].shape)>1:
             attribute[k] = np.vstack(attribute[k])
@@ -67,11 +69,11 @@ def read_las(fname, attr_list=('rgb','class'),tm='49n'):
             attribute[k] = np.hstack(attribute[k])
 
     attribute['rgb']=attribute['rgb'].astype('u1')
-    # 构造结果字典
+    # convert to dist
     pcd= {
         'xyz': xyz,
         'attr': attribute,
-        'metainfo':{        # 元数据
+        'metainfo':{
             'box': boundary,
             'scale':las.scale,
             'count':ncout,
@@ -85,9 +87,9 @@ def read_las(fname, attr_list=('rgb','class'),tm='49n'):
 
 def covert_neu(info,tm,transM=None):
     '''
-    转换成neu坐标的数据,将修改info的值
-    :param info:读取后的字典值
-    :param tm:投影带参数
+    convert to neu
+    :param info:
+    :param transM:proj4 param
     :return:no
     '''
     # -- center
@@ -152,11 +154,10 @@ class treeNode:
     def __init__(self):
         self.parent = None
         self.childs = []
-        #self.content = {}
         self.key = ''
         self.level = 0
         self.file = ''
-        self.hierarchy = False
+        self.hierarchy = 0
 
     def getParent(self):
         return  self.parent
@@ -177,16 +178,15 @@ class treeNode:
             for e in self.childs:
                 e.addNode(node)
 
-    def setFile(self,file):
+    def setFile(self,file,hierarchyStepSize=5):
         self.file = file
         self.key = os.path.basename(file).split('.')[0]
         self.level = len(self.key) - 1
-        if self.level%5==0:
-            self.hierarchy = True
+        if self.level%hierarchyStepSize==0:
+            self.hierarchy = self.level/hierarchyStepSize
 
 #after potree,the node exist just one point,this situtation can't make the box,
-# so if the number of points less than limit_node_size,i just abandon it
-limit_node_size=4
+# so if the number of points less than limit_node_point_size,i just abandon it
 def visitNode(childs,tileset_json,tm='',transM=None,outdir=''):
     if not childs:return
 
@@ -198,9 +198,13 @@ def visitNode(childs,tileset_json,tm='',transM=None,outdir=''):
         'geometricError': 0,
         }
         _pcd = read_las(e.file, tm=tm)
-        if _pcd['xyz'].shape[0] < limit_node_size: continue
+        if _pcd['xyz'].shape[0] < limit_node_point_size: continue
         _pcd = covert_neu(_pcd, tm=tm, transM=transM)
-        pcd2pnts(_pcd, r'%s/%s.pnts' % (outdir, e.key))
+        pntsfile = r'%s/%s.pnts' % (outdir,e.key)
+        # if e.hierarchy:
+        #     #pntsdir = r'%s/%s'%(outdir,e.key[e.hierarchy+1:])
+        #     pntsfile = r'%s/%s/%s.pnts' % (outdir,e.key)
+        pcd2pnts(_pcd, pntsfile)
         _child_node['boundingVolume']['box'] = _pcd.get('neu').get('bbox')
         _child_node['geometricError'] = _pcd.get('neu').get('bbox')[3] / geomeotric_space
         _child_node['content']['url'] = '%s.pnts' % (e.key)
@@ -211,41 +215,24 @@ def visitNode(childs,tileset_json,tm='',transM=None,outdir=''):
 
 
 import os
-import copy
-def testConvert():
-    src = r'D:\Program Files (x86)\HiServer\apache2.2\htdocs\potree\pointclouds\test\data\r'
-    # out dir
-    outdir = r'D:\Program Files (x86)\HiServer\apache2.2\htdocs\pcdtest1\potree'
-    proj_param = 'EPSG:32650'
-    # box from cloud.js in potree result
-    bbox = {
-        'bbox': {
-            "lx": 536982.3269807688,
-            "ly": 2805172.6864022344,
-            "lz": 228.40542941074819,
-            "ux": 572545.4316293589,
-            "uy": 2840735.7910508245,
-            "uz": 35791.510078000836
-        },
-        'tbbox': {
-            "lx": 536982.3269807688,
-            "ly": 2805172.6864022344,
-            "lz": 228.40542941074819,
-            "ux": 543434.6162458079,
-            "uy": 2840735.7910883247,
-            "uz": 1002.2817169420287
-        }
-    }
+import json
+def convert23dtiles(src,outdir,proj_param,max_level = 15):
+    cloudjs = '%s/cloud.js'%(src)
+    with open(cloudjs,'r') as f:
+        cloud_data = json.load(f)
+
+    hierarchyStepSize =cloud_data['hierarchyStepSize']
 
     # get all node
     # las_list = glob2.glob("%s/*.las"%src) #just first hierarchy
-    las_list = glob2.glob("%s/**/*.las" % src)  # convert all
+    data_dir = "%s/data/r"%(src)
+    las_list = glob2.glob("%s/**/*.las" % data_dir)  # convert all
 
     if not las_list:
         print('can not find las')
         return
 
-    tightBox = bbox.get('tbbox')
+    tightBox = cloud_data.get('tightBoundingBox')
     mu = np.array([(tightBox['lx'] + tightBox['ux']) / 2, (tightBox['ly'] + tightBox['uy']) / 2,
                    (tightBox['lz'] + tightBox['uz']) / 2])
 
@@ -269,13 +256,14 @@ def testConvert():
         'transform': list(transM.flatten()),  # r4x4, neu 2 wgs84
     }
 
-    geomeotric_space = 16
     rootnode = treeNode()
 
-    rootnode.setFile(las_list[0])
+    rootnode.setFile(las_list[0],hierarchyStepSize)
     for e in las_list:
         _node = treeNode()
         _node.setFile(e)
+        if _node.level>max_level:
+            continue
         rootnode.addNode(_node)
 
     pcd = read_las(rootnode.file, tm=proj_param)
@@ -296,9 +284,14 @@ def testConvert():
 
 
 
-#hierarchyStepSize=5
 
 if __name__ == "__main__":
-    testConvert()
+    #src-->potree data dir,include cloud.js
+    src = r'D:\Program Files (x86)\HiServer\apache2.2\htdocs\potree\pointclouds\test'
+    # out dir
+    outdir = r'D:\Program Files (x86)\HiServer\apache2.2\htdocs\pcdtest1\potree'
+    proj_param = 'EPSG:32650'
+
+    convert23dtiles(src,outdir,proj_param,max_level=5)
 
 
